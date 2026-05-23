@@ -119,7 +119,7 @@ export default function AttendanceScreen() {
                 {formatDateTime(item.clockOut)}
               </Text>
             </View>
-            {item.workHours && (
+            {item.workHours != null && (
               <Text style={styles.hours}>근무시간 : {item.workHours}시간</Text>
             )}
           </View>
