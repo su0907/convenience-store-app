@@ -1,12 +1,16 @@
 import api from "./axios";
 
-export const clockIn = async () => {
-  const response = await api.post("/api/attendance/clock-in");
+export const clockIn = async (latitude, longitude) => {
+  const response = await api.post(
+    `/api/attendance/clock-in?latitude=${latitude}&longitude=${longitude}`,
+  );
   return response.data;
 };
 
-export const clockOut = async () => {
-  const response = await api.post("/api/attendance/clock-out");
+export const clockOut = async (latitude, longitude) => {
+  const response = await api.post(
+    `/api/attendance/clock-out?latitude=${latitude}&longitude=${longitude}`,
+  );
   return response.data;
 };
 

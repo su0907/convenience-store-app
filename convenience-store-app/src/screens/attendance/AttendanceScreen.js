@@ -8,16 +8,90 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
+import * as Location from "expo-location";
+import MapView, { Marker, Circle } from "react-native-maps";
 import { clockIn, clockOut, getMyAttendance } from "../../api/attendanceApi";
+import api from "../../api/axios";
+
+const STORE_RADIUS = 500;
 
 export default function AttendanceScreen() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [storeLocations, setStoreLocations] = useState([]);
+  const [isWithinRange, setIsWithinRange] = useState(false);
 
   useEffect(() => {
     fetchAttendance();
+    fetchStoreLocations();
   }, []);
+
+  useEffect(() => {
+    if (storeLocations.length > 0) {
+      startLocationTracking();
+    }
+  }, [storeLocations]);
+
+  const fetchStoreLocations = async () => {
+    try {
+      const response = await api.get("/api/store/location");
+      setStoreLocations(response.data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const startLocationTracking = async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("권한 오류", "위치 권한이 필요합니다.");
+      return;
+    }
+
+    // 실시간 위치 추적
+    await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.High,
+        timeInterval: 3000,
+        distanceInterval: 10,
+      },
+      (location) => {
+        const coords = location.coords;
+        setCurrentLocation(coords);
+
+        // 반경 확인
+        if (storeLocations.length > 0) {
+          const within = storeLocations.some((store) => {
+            const distance = calculateDistance(
+              coords.latitude,
+              coords.longitude,
+              store.latitude,
+              store.longitude,
+            );
+            return distance <= STORE_RADIUS;
+          });
+          setIsWithinRange(within);
+        }
+      },
+    );
+  };
+
+  // Haversine 공식
+  const calculateDistance = (lat1, lng1, lat2, lng2) => {
+    const R = 6371000;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLng = ((lng2 - lng1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
 
   const fetchAttendance = async () => {
     try {
@@ -33,11 +107,18 @@ export default function AttendanceScreen() {
   const handleClockIn = async () => {
     setLoading(true);
     try {
-      await clockIn();
+      if (!currentLocation) {
+        Alert.alert(
+          "오류",
+          "위치를 가져오는 중입니다. 잠시 후 다시 시도해주세요.",
+        );
+        return;
+      }
+      await clockIn(currentLocation.latitude, currentLocation.longitude);
       Alert.alert("출근", "출근이 완료되었습니다.");
       fetchAttendance();
     } catch (err) {
-      Alert.alert("오류", "이미 출근 중입니다.");
+      Alert.alert("오류", "편의점 반경 500m 이내에서만 출근할 수 있습니다.");
     } finally {
       setLoading(false);
     }
@@ -46,11 +127,18 @@ export default function AttendanceScreen() {
   const handleClockOut = async () => {
     setLoading(true);
     try {
-      await clockOut();
+      if (!currentLocation) {
+        Alert.alert(
+          "오류",
+          "위치를 가져오는 중입니다. 잠시 후 다시 시도해주세요.",
+        );
+        return;
+      }
+      await clockOut(currentLocation.latitude, currentLocation.longitude);
       Alert.alert("퇴근", "퇴근이 완료되었습니다.");
       fetchAttendance();
     } catch (err) {
-      Alert.alert("오류", "출근 기록이 없습니다.");
+      Alert.alert("오류", "편의점 반경 500m 이내에서만 퇴근할 수 있습니다.");
     } finally {
       setLoading(false);
     }
@@ -65,6 +153,62 @@ export default function AttendanceScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>출퇴근 관리</Text>
 
+      {/* 지도 */}
+      {currentLocation && (
+        <View style={styles.mapContainer}>
+          <MapView
+            style={styles.map}
+            initialRegion={{
+              latitude: currentLocation.latitude,
+              longitude: currentLocation.longitude,
+              latitudeDelta: 0.01,
+              longitudeDelta: 0.01,
+            }}
+            showsUserLocation={true}
+          >
+            {storeLocations.map((store) => (
+              <React.Fragment key={store.id}>
+                <Marker
+                  coordinate={{
+                    latitude: store.latitude,
+                    longitude: store.longitude,
+                  }}
+                  title={store.name}
+                  pinColor="#3498db"
+                />
+                <Circle
+                  center={{
+                    latitude: store.latitude,
+                    longitude: store.longitude,
+                  }}
+                  radius={STORE_RADIUS}
+                  strokeColor={isWithinRange ? "#2ecc71" : "#e74c3c"}
+                  fillColor={
+                    isWithinRange
+                      ? "rgba(46,204,113,0.15)"
+                      : "rgba(231,76,60,0.15)"
+                  }
+                  strokeWidth={2}
+                />
+              </React.Fragment>
+            ))}
+          </MapView>
+
+          {/* 반경 상태 표시 */}
+          <View
+            style={[
+              styles.rangeStatus,
+              { backgroundColor: isWithinRange ? "#2ecc71" : "#e74c3c" },
+            ]}
+          >
+            <Text style={styles.rangeText}>
+              {isWithinRange ? "✅ 반경 이내" : "❌ 반경 밖"}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* 출퇴근 버튼 */}
       <View style={styles.btnBox}>
         <TouchableOpacity
           style={[styles.btn, styles.clockInBtn, isWorking && styles.disabled]}
@@ -142,8 +286,31 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "bold",
     color: "#2c3e50",
-    marginBottom: 20,
+    marginBottom: 12,
     marginTop: 50,
+  },
+  mapContainer: {
+    height: 200,
+    borderRadius: 10,
+    overflow: "hidden",
+    marginBottom: 16,
+    position: "relative",
+  },
+  map: {
+    flex: 1,
+  },
+  rangeStatus: {
+    position: "absolute",
+    bottom: 10,
+    left: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  rangeText: {
+    color: "white",
+    fontSize: 13,
+    fontWeight: "bold",
   },
   btnBox: {
     flexDirection: "row",
